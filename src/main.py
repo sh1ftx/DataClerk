@@ -23,6 +23,7 @@ def print_log(msg, color=None):
         print(msg)
     log(msg)
 
+# Formula banner da questao
 def banner(titulo, char='─', cor=Fore.MAGENTA):
     tamanho = 80
     linha = char * tamanho
@@ -30,6 +31,7 @@ def banner(titulo, char='─', cor=Fore.MAGENTA):
     print_log(f"{cor}{titulo.center(tamanho)}")
     print_log(f"{cor}{linha}{Style.RESET_ALL}\n")
 
+# Conecta ao sql
 def conectar_mysql():
     print_log(f"{Fore.CYAN}🔐 Tentando conexão com MySQL database 'loja'...{Style.RESET_ALL}")
     log("", mode='w')  # limpa o arquivo de log (modo write)
@@ -49,8 +51,8 @@ def conectar_mysql():
         print_log(f"{Fore.RED}❌ Erro de conexão: {err}{Style.RESET_ALL}")
         sys.exit(1)
 
+ # Verifica se a tabela existe
 def verificar_tabela(cursor, tabela, colunas_esperadas):
-    # Verifica se a tabela existe
     cursor.execute(f"SHOW TABLES LIKE '{tabela}'")
     existe = cursor.fetchone() is not None
     if not existe:
@@ -74,6 +76,7 @@ def verificar_tabela(cursor, tabela, colunas_esperadas):
         'extras': list(colunas_extras)
     }
 
+# Mostra as tabelas
 def mostrar_registros(cursor, tabela, limite=3):
     cursor.execute(f"SELECT * FROM {tabela} LIMIT {limite}")
     linhas = cursor.fetchall()
