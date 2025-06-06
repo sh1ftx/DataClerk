@@ -12,6 +12,10 @@ init(autoreset=True)
 
 LOG_FILE = "verificacao_loja.log"
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Utilitários de Log e Impressão
+# ─────────────────────────────────────────────────────────────────────────────
+
 def log(msg, mode='a'):
     with open(LOG_FILE, mode, encoding='utf-8') as f:
         f.write(msg + "\n")
@@ -23,7 +27,6 @@ def print_log(msg, color=None):
         print(msg)
     log(msg)
 
-# Formula banner da questao
 def banner(titulo, char='─', cor=Fore.MAGENTA):
     tamanho = 80
     linha = char * tamanho
@@ -31,141 +34,8 @@ def banner(titulo, char='─', cor=Fore.MAGENTA):
     print_log(f"{cor}{titulo.center(tamanho)}")
     print_log(f"{cor}{linha}{Style.RESET_ALL}\n")
 
-# Conecta ao sql
-def conectar_mysql():
-    print_log(f"{Fore.CYAN}🔐 Tentando conexão com MySQL database 'loja'...{Style.RESET_ALL}")
-    log("", mode='w')  # limpa o arquivo de log (modo write)
-
-    senha = getpass(f"{Fore.YELLOW}Digite a senha do MySQL root: {Style.RESET_ALL}")
-    try:
-        conexao = mysql.connector.connect(
-            host="localhost",
-            user="root",
-            password=senha,
-            database="loja",
-            auth_plugin='mysql_native_password'  # compatibilidade plugin
-        )
-        print_log(f"{Fore.GREEN}✅ Conexão ao MySQL realizada com sucesso.{Style.RESET_ALL}")
-        return conexao
-    except mysql.connector.Error as err:
-        print_log(f"{Fore.RED}❌ Erro de conexão: {err}{Style.RESET_ALL}")
-        sys.exit(1)
-
- # Verifica se a tabela existe
-def verificar_tabela(cursor, tabela, colunas_esperadas):
-    cursor.execute(f"SHOW TABLES LIKE '{tabela}'")
-    existe = cursor.fetchone() is not None
-    if not existe:
-        return False, None
-
-    # Verifica colunas da tabela
-    cursor.execute(f"DESCRIBE {tabela}")
-    colunas = [row[0] for row in cursor.fetchall()]
-    colunas_set = set(colunas)
-    colunas_esperadas_set = set(colunas_esperadas)
-
-    colunas_corretas = colunas_set == colunas_esperadas_set
-    colunas_faltando = colunas_esperadas_set - colunas_set
-    colunas_extras = colunas_set - colunas_esperadas_set
-
-    return {
-        'existe': True,
-        'colunas': colunas,
-        'colunas_corretas': colunas_corretas,
-        'faltando': list(colunas_faltando),
-        'extras': list(colunas_extras)
-    }
-
-# Mostra as tabelas
-def mostrar_registros(cursor, tabela, limite=3):
-    cursor.execute(f"SELECT * FROM {tabela} LIMIT {limite}")
-    linhas = cursor.fetchall()
-    if not linhas:
-        return f"{Fore.YELLOW}(sem registros){Style.RESET_ALL}"
-    cursor.execute(f"DESCRIBE {tabela}")
-    colunas = [row[0] for row in cursor.fetchall()]
-    return tabulate(linhas, headers=colunas, tablefmt="fancy_grid", numalign="right", stralign="left")
-
-def contar_registros(cursor, tabela):
-    cursor.execute(f"SELECT COUNT(*) FROM {tabela}")
-    count = cursor.fetchone()[0]
-    return count
-
-def existe_routine(cursor, nome, tipo):
-    if tipo == 'PROCEDURE':
-        cursor.execute(f"SHOW PROCEDURE STATUS WHERE Db = DATABASE() AND Name = '{nome}'")
-    elif tipo == 'FUNCTION':
-        cursor.execute(f"SHOW FUNCTION STATUS WHERE Db = DATABASE() AND Name = '{nome}'")
-    else:
-        return False
-    return cursor.fetchone() is not None
-
-def executar_funcao(cursor, nome_func, pedido_id):
-    try:
-        cursor.execute(f"SELECT {nome_func}({pedido_id})")
-        resultado = cursor.fetchone()
-        if resultado:
-            return resultado[0]
-        else:
-            return None
-    except Exception as e:
-        return f"Erro executando função: {e}"
-
-def pegar_itens_pedido(cursor, pedido_id):
-    cursor.execute("SELECT * FROM itens_pedido WHERE pedido_id = %s", (pedido_id,))
-    linhas = cursor.fetchall()
-    if not linhas:
-        return f"{Fore.YELLOW}(pedido sem itens){Style.RESET_ALL}"
-    cursor.execute("DESCRIBE itens_pedido")
-    colunas = [row[0] for row in cursor.fetchall()]
-    return tabulate(linhas, headers=colunas, tablefmt="fancy_grid", numalign="right", stralign="left")
-
-def executar_procedure_criar_pedido(cursor, nome_proc, cliente_id, data_pedido):
-    # Exemplo de chamada - adaptável conforme procedure criada
-    try:
-        cursor.callproc(nome_proc, [cliente_id, data_pedido, 0])  # supondo OUT no 3º param
-        # para pegar OUT, pode usar cursor.stored_results() - depende da procedure real
-        return True, "Procedure executada com sucesso"
-    except Exception as e:
-        return False, str(e)
-
-def executar_procedure_adicionar_item(cursor, nome_proc, pedido_id, produto_id, quantidade):
-    try:
-        cursor.callproc(nome_proc, [pedido_id, produto_id, quantidade])
-        return True, "Item adicionado com sucesso"
-    except Exception as e:
-        return False, str(e)
-
-def validar_relacionamentos(cursor):
-    """
-    Valida integrity referencial básica
-    (clientes.id -> pedidos.cliente_id, pedidos.id -> itens_pedido.pedido_id, produtos.id -> itens_pedido.produto_id)
-    """
-    rels = [
-        {
-            'nome': 'cliente_id em pedidos',
-            'query': "SELECT COUNT(*) FROM pedidos p LEFT JOIN clientes c ON p.cliente_id = c.id WHERE c.id IS NULL"
-        },
-        {
-            'nome': 'pedido_id em itens_pedido',
-            'query': "SELECT COUNT(*) FROM itens_pedido i LEFT JOIN pedidos p ON i.pedido_id = p.id WHERE p.id IS NULL"
-        },
-        {
-            'nome': 'produto_id em itens_pedido',
-            'query': "SELECT COUNT(*) FROM itens_pedido i LEFT JOIN produtos pr ON i.produto_id = pr.id WHERE pr.id IS NULL"
-        }
-    ]
-    resultados = []
-    for r in rels:
-        cursor.execute(r['query'])
-        count = cursor.fetchone()[0]
-        resultados.append((r['nome'], count == 0, count))
-    return resultados
-
 def tempo_execucao(inicio):
-    fim = time.time()
-    duracao = fim - inicio
-    return f"{duracao:.3f}s"
+    return f"{(time.time() - inicio):.3f}s"
 
 def perguntar_sim_nao(pergunta):
     while True:
@@ -173,150 +43,267 @@ def perguntar_sim_nao(pergunta):
         if resposta in ['s', 'n']:
             return resposta == 's'
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Conexão com Banco de Dados
+# ─────────────────────────────────────────────────────────────────────────────
+
+def conectar_mysql():
+    print_log(f"Tentando conexão com o banco de dados 'loja'...", Fore.CYAN)
+    log("", mode='w')  # limpa log
+    senha = getpass(f"Digite a senha do MySQL root: ")
+
+    try:
+        conexao = mysql.connector.connect(
+            host="localhost",
+            user="root",
+            password=senha,
+            database="loja",
+            auth_plugin='mysql_native_password'
+        )
+        print_log(f"Conexão bem-sucedida.", Fore.GREEN)
+        return conexao
+    except mysql.connector.Error as err:
+        print_log(f"Erro de conexão: {err}", Fore.RED)
+        sys.exit(1)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Verificações de Estrutura e Dados
+# ─────────────────────────────────────────────────────────────────────────────
+
+def verificar_tabela(cursor, tabela, colunas_esperadas):
+    cursor.execute(f"SHOW TABLES LIKE '{tabela}'")
+    if cursor.fetchone() is None:
+        return {'existe': False}
+
+    cursor.execute(f"DESCRIBE {tabela}")
+    colunas = [row[0] for row in cursor.fetchall()]
+    colunas_set = set(colunas)
+    esperadas_set = set(colunas_esperadas)
+
+    return {
+        'existe': True,
+        'colunas': colunas,
+        'colunas_corretas': colunas_set == esperadas_set,
+        'faltando': list(esperadas_set - colunas_set),
+        'extras': list(colunas_set - esperadas_set)
+    }
+
+def mostrar_registros(cursor, tabela, limite=3):
+    cursor.execute(f"SELECT * FROM {tabela} LIMIT {limite}")
+    linhas = cursor.fetchall()
+    if not linhas:
+        return f"{Fore.YELLOW}(sem registros)"
+    cursor.execute(f"DESCRIBE {tabela}")
+    colunas = [row[0] for row in cursor.fetchall()]
+    return tabulate(linhas, headers=colunas, tablefmt="fancy_grid")
+
+def contar_registros(cursor, tabela):
+    cursor.execute(f"SELECT COUNT(*) FROM {tabela}")
+    return cursor.fetchone()[0]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Procedures, Functions e Relacionamentos
+# ─────────────────────────────────────────────────────────────────────────────
+
+def existe_routine(cursor, nome, tipo):
+    tipo = tipo.upper()
+    query = f"SHOW {tipo} STATUS WHERE Db = DATABASE() AND Name = %s"
+    cursor.execute(query, (nome,))
+    return cursor.fetchone() is not None
+
+def executar_funcao(cursor, nome_func, pedido_id):
+    try:
+        cursor.execute(f"SELECT {nome_func}(%s)", (pedido_id,))
+        result = cursor.fetchone()
+        return result[0] if result else None
+    except Exception as e:
+        return f"Erro executando função: {e}"
+
+def pegar_itens_pedido(cursor, pedido_id):
+    cursor.execute("SELECT * FROM itens_pedido WHERE pedido_id = %s", (pedido_id,))
+    linhas = cursor.fetchall()
+    if not linhas:
+        return f"{Fore.YELLOW}(pedido sem itens)"
+    cursor.execute("DESCRIBE itens_pedido")
+    colunas = [row[0] for row in cursor.fetchall()]
+    return tabulate(linhas, headers=colunas, tablefmt="fancy_grid")
+
+def validar_relacionamentos(cursor):
+    consultas = [
+        ("cliente_id em pedidos", """
+            SELECT p.id AS pedido_id, p.cliente_id, c.id AS cliente_existente 
+            FROM pedidos p LEFT JOIN clientes c ON p.cliente_id = c.id 
+            WHERE c.id IS NULL
+        """),
+        ("pedido_id em itens_pedido", """
+            SELECT i.id AS item_id, i.pedido_id, p.id AS pedido_existente
+            FROM itens_pedido i LEFT JOIN pedidos p ON i.pedido_id = p.id 
+            WHERE p.id IS NULL
+        """),
+        ("produto_id em itens_pedido", """
+            SELECT i.id AS item_id, i.produto_id, pr.id AS produto_existente
+            FROM itens_pedido i LEFT JOIN produtos pr ON i.produto_id = pr.id 
+            WHERE pr.id IS NULL
+        """)
+    ]
+    resultados = []
+    for nome, query in consultas:
+        cursor.execute(query)
+        linhas = cursor.fetchall()
+        ok = len(linhas) == 0
+        resultados.append((nome, ok, linhas))
+    return resultados
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Procedimentos Dinâmicos
+# ─────────────────────────────────────────────────────────────────────────────
+
+def testar_procedures(cursor, conexao):
+    cliente_id = 1
+    data_hoje = datetime.date.today().strftime('%Y-%m-%d')
+
+    print_log(f"- Executando 'criar_pedido' com cliente_id={cliente_id}...", Fore.CYAN)
+    try:
+        args = [cliente_id]
+        cursor.callproc('criar_pedido', args)
+        conexao.commit()
+        print_log(f"  ✔ Pedido criado com sucesso.", Fore.GREEN)
+    except Exception as e:
+        print_log(f"  ✘ Erro ao criar pedido: {e}", Fore.RED)
+        return
+
+    # Recupera o id do pedido criado para usar nos testes
+    cursor.execute("SELECT MAX(id) FROM pedidos WHERE cliente_id = %s", (cliente_id,))
+    pedido_id = cursor.fetchone()[0]
+
+    produto_id = 1
+    qtd = 2
+
+    print_log(f"- Adicionando item ao pedido_id={pedido_id}, produto_id={produto_id}, quantidade={qtd}...", Fore.CYAN)
+    try:
+        cursor.callproc('adicionar_item', [pedido_id, produto_id, qtd])
+        conexao.commit()
+        print_log(f"  ✔ Item adicionado com sucesso.", Fore.GREEN)
+    except Exception as e:
+        print_log(f"  ✘ Erro ao adicionar item: {e}", Fore.RED)
+
+    # Mostrar itens do pedido criado
+    print_log(f"\nItens atuais do pedido {pedido_id}:", Fore.MAGENTA)
+    print_log(pegar_itens_pedido(cursor, pedido_id))
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Execução Principal
+# ─────────────────────────────────────────────────────────────────────────────
+
 def main():
     inicio = time.time()
-    # Limpa log no início
     if os.path.exists(LOG_FILE):
         os.remove(LOG_FILE)
 
     conexao = conectar_mysql()
     cursor = conexao.cursor()
 
+    # ─ Questão 1 ─
     banner("Questão 1 - Verificação Estrutura e Dados", cor=Fore.BLUE)
-    tabelas_esperadas = {
+    tabelas = {
         'clientes': ['id', 'nome', 'email'],
         'produtos': ['id', 'nome', 'preco', 'estoque'],
         'pedidos': ['id', 'cliente_id', 'data_pedido'],
-        'itens_pedido': ['id', 'pedido_id', 'produto_id', 'quantidade'],
+        'itens_pedido': ['id', 'pedido_id', 'produto_id', 'quantidade']
     }
+    estrutura_ok = True
+    dados_ok = True
 
-    q1_estrutura_ok = True
-    q1_dados_ok = True
-
-    for tabela, colunas in tabelas_esperadas.items():
+    for tabela, colunas in tabelas.items():
         resultado = verificar_tabela(cursor, tabela, colunas)
-        if not resultado['existe']:
-            print_log(f"{Fore.RED}❌ Tabela '{tabela}' NÃO existe.{Style.RESET_ALL}")
-            q1_estrutura_ok = False
+        if not resultado.get('existe'):
+            print_log(f"Tabela '{tabela}' NÃO existe.", Fore.RED)
+            estrutura_ok = False
             continue
 
-        print_log(f"{Fore.GREEN}✅ Tabela '{tabela}' existe.{Style.RESET_ALL}")
+        print_log(f"Tabela '{tabela}' encontrada.", Fore.GREEN)
         if resultado['colunas_corretas']:
-            print_log(f"{Fore.GREEN}  Colunas estão corretas: {', '.join(resultado['colunas'])}")
+            print_log(f"- Colunas OK: {', '.join(resultado['colunas'])}")
         else:
-            q1_estrutura_ok = False
+            estrutura_ok = False
             if resultado['faltando']:
-                print_log(f"{Fore.RED}  Colunas faltando: {', '.join(resultado['faltando'])}")
+                print_log(f"- Faltando colunas: {', '.join(resultado['faltando'])}", Fore.RED)
             if resultado['extras']:
-                print_log(f"{Fore.YELLOW}  Colunas extras: {', '.join(resultado['extras'])}")
+                print_log(f"- Colunas extras: {', '.join(resultado['extras'])}", Fore.YELLOW)
 
-        # Exibir alguns registros
-        print_log(f"{Fore.CYAN}  Exemplos de registros na tabela '{tabela}':")
-        exemplos = mostrar_registros(cursor, tabela)
-        print_log(exemplos)
-
-        # Verificar se há pelo menos 3 registros
-        count = contar_registros(cursor, tabela)
-        if count < 3:
-            print_log(f"{Fore.YELLOW}⚠️ Atenção: tabela '{tabela}' possui menos de 3 registros ({count}).{Style.RESET_ALL}")
-            q1_dados_ok = False
+        print_log(f"- Exemplos de registros:")
+        print_log(mostrar_registros(cursor, tabela))
+        total = contar_registros(cursor, tabela)
+        if total < 3:
+            print_log(f"- Atenção: menos de 3 registros ({total})", Fore.YELLOW)
+            dados_ok = False
         else:
-            print_log(f"{Fore.GREEN}  Tabela '{tabela}' tem {count} registros.{Style.RESET_ALL}")
+            print_log(f"- Total de registros: {total}", Fore.GREEN)
 
-    if q1_estrutura_ok and q1_dados_ok:
-        print_log(f"\n{Fore.GREEN}✔️ Questão 1 concluída com sucesso: estrutura e dados corretos.{Style.RESET_ALL}")
+    if estrutura_ok and dados_ok:
+        print_log(f"\n✔ Estrutura e dados verificados com sucesso.", Fore.GREEN)
     else:
-        print_log(f"\n{Fore.RED}❌ Questão 1 encontrou problemas na estrutura ou dados.{Style.RESET_ALL}")
+        print_log(f"\n✘ Problemas detectados na Questão 1.", Fore.RED)
 
+    # ─ Questão 2 ─
     banner("Questão 2 - Procedures e Function", cor=Fore.BLUE)
-    procedimentos_esperados = {
+    rotinas = {
         'criar_pedido': 'PROCEDURE',
         'adicionar_item': 'PROCEDURE',
         'calcular_total_pedido': 'FUNCTION'
     }
+    rotinas_ok = True
 
-    q2_ok = True
-
-    for nome, tipo in procedimentos_esperados.items():
-        existe = existe_routine(cursor, nome, tipo)
-        if existe:
-            print_log(f"{Fore.GREEN}✅ {tipo} '{nome}' existe.{Style.RESET_ALL}")
+    for nome, tipo in rotinas.items():
+        if existe_routine(cursor, nome, tipo):
+            print_log(f"- {tipo} '{nome}' encontrada.", Fore.GREEN)
         else:
-            print_log(f"{Fore.RED}❌ {tipo} '{nome}' NÃO encontrada.{Style.RESET_ALL}")
-            q2_ok = False
+            print_log(f"- {tipo} '{nome}' NÃO encontrada.", Fore.RED)
+            rotinas_ok = False
 
-    if not q2_ok:
-        print_log(f"{Fore.RED}❌ Questão 2 não passou por procedimentos ausentes.{Style.RESET_ALL}")
+    if rotinas_ok:
+        print_log(f"\n✔ Todas rotinas estão presentes.", Fore.GREEN)
+        print_log(f"- Testando função 'calcular_total_pedido' com pedido_id=1")
+        resultado = executar_funcao(cursor, 'calcular_total_pedido', 1)
+        if isinstance(resultado, str):
+            print_log(f"  ✘ {resultado}", Fore.RED)
+        else:
+            print_log(f"  ✔ Resultado: R$ {resultado:.2f}", Fore.GREEN)
+            print_log(f"\nItens do pedido 1:")
+            print_log(pegar_itens_pedido(cursor, 1))
+    else:
+        print_log(f"\n✘ Falha na verificação de rotinas. Encerrando.", Fore.RED)
         cursor.close()
         conexao.close()
         sys.exit(1)
 
-    # Teste prático da função calcular_total_pedido para pedido_id=1
-    print_log(f"\n{Fore.CYAN}Testando função 'calcular_total_pedido' para pedido_id=1...")
-    resultado_func = executar_funcao(cursor, 'calcular_total_pedido', 1)
-    if resultado_func is None:
-        print_log(f"{Fore.RED}Erro: função retornou NULL ou erro.{Style.RESET_ALL}")
-        q2_ok = False
-    elif isinstance(resultado_func, str) and resultado_func.startswith("Erro"):
-        print_log(f"{Fore.RED}{resultado_func}{Style.RESET_ALL}")
-        q2_ok = False
-    else:
-        print_log(f"{Fore.GREEN}Resultado: total do pedido_id=1 é {resultado_func:.2f}{Style.RESET_ALL}")
+    # ─ Questão 3 ─
+    banner("Questão 3 - Integridade Referencial", cor=Fore.BLUE)
+    integridade_ok = True
 
-    # Exibir itens do pedido 1 para validação visual
-    print_log(f"\n{Fore.CYAN}Itens do pedido_id=1 para validação:")
-    print_log(pegar_itens_pedido(cursor, 1))
+    print_log("Validação dos relacionamentos e integridade referencial:\n", Fore.CYAN)
+    resultados_rel = validar_relacionamentos(cursor)
 
-    banner("Questão 3 - Integridade Referencial e Relacionamentos", cor=Fore.BLUE)
-    rel_results = validar_relacionamentos(cursor)
-    rel_ok = True
-    for nome_rel, ok, count in rel_results:
+    for nome, ok, linhas in resultados_rel:
         if ok:
-            print_log(f"{Fore.GREEN}✅ Integridade ok: {nome_rel}{Style.RESET_ALL}")
+            print_log(f"- {nome}: {Fore.GREEN}OK{Style.RESET_ALL} (nenhum registro inválido)")
         else:
-            print_log(f"{Fore.RED}❌ Integridade quebrada: {nome_rel} tem {count} registros inválidos.{Style.RESET_ALL}")
-            rel_ok = False
+            integridade_ok = False
+            print_log(f"- {nome}: {Fore.RED}ERRO{Style.RESET_ALL} - {len(linhas)} registro(s) inválido(s) encontrado(s)")
+            print_log(tabulate(linhas, headers="keys", tablefmt="fancy_grid", showindex=False), Fore.YELLOW)
 
-    if rel_ok:
-        print_log(f"{Fore.GREEN}✔️ Questão 3 concluída: integridade referencial está OK.{Style.RESET_ALL}")
+    if integridade_ok:
+        print_log("\n✔ Integridade referencial validada com sucesso.", Fore.GREEN)
     else:
-        print_log(f"{Fore.RED}❌ Questão 3 encontrou problemas na integridade referencial.{Style.RESET_ALL}")
+        print_log("\n✘ Problemas detectados na integridade referencial.", Fore.RED)
 
-    banner("Questão 4 - Testes Dinâmicos de Procedures", cor=Fore.BLUE)
-    # Exemplo simplificado, precisa adaptar procedure de criação e adição
-    if perguntar_sim_nao("Deseja executar testes dinâmicos da procedure 'criar_pedido' e 'adicionar_item'?"):
-        # Teste básico criar_pedido
-        cliente_id_test = 1
-        data_test = datetime.date.today().strftime("%Y-%m-%d")
-        print_log(f"Executando procedure 'criar_pedido' com cliente_id={cliente_id_test} e data_pedido='{data_test}'")
-        try:
-            cursor.callproc('criar_pedido', [cliente_id_test, data_test, 0])  # 3º param OUT id_pedido
-            # pegar OUT param
-            for result in cursor.stored_results():
-                print_log(f"Procedure result: {result.fetchall()}")
-            conexao.commit()
-            print_log(f"{Fore.GREEN}✅ Procedure 'criar_pedido' executada com sucesso.{Style.RESET_ALL}")
-        except Exception as e:
-            print_log(f"{Fore.RED}Erro executando 'criar_pedido': {e}{Style.RESET_ALL}")
-
-        # Teste adicionar_item
-        print_log(f"Tentando adicionar item no pedido recém criado...")
-        try:
-            pedido_id_test = 1  # para testes, usar 1 (ou capturar do OUT acima)
-            produto_id_test = 1
-            quantidade_test = 2
-            cursor.callproc('adicionar_item', [pedido_id_test, produto_id_test, quantidade_test])
-            conexao.commit()
-            print_log(f"{Fore.GREEN}✅ Procedure 'adicionar_item' executada com sucesso.{Style.RESET_ALL}")
-        except Exception as e:
-            print_log(f"{Fore.RED}Erro executando 'adicionar_item': {e}{Style.RESET_ALL}")
-    else:
-        print_log("Testes dinâmicos ignorados pelo usuário.")
+    # ─ Questão 4 ─
+    banner("Questão 4 - Testes dinâmicos das procedures", cor=Fore.BLUE)
+    testar_procedures(cursor, conexao)
 
     cursor.close()
     conexao.close()
-    duracao = tempo_execucao(inicio)
-    banner(f"Verificação concluída em {duracao}", cor=Fore.GREEN)
+    print_log(f"\nExecução finalizada em {tempo_execucao(inicio)}", Fore.MAGENTA)
 
 if __name__ == "__main__":
     main()
